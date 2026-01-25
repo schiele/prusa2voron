@@ -1,0 +1,3 @@
+[submodule "PrusaSlicer-settings-prusa-fff"]
+	path = PrusaSlicer-settings-prusa-fff
+	url = ../../prusa3d/PrusaSlicer-settings-prusa-fff.git

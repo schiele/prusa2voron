@@ -1,0 +1,9 @@
+#!/bin/bash
+set -eu
+rm -rf ref
+mkdir ref{,/print,/filament,/printer}
+./parseprusa.py "$@" --list | sed -ne 's/^\(printer:Original Prusa XL .*Input Shaper\)/\1/p;s/^\(print:.* @XLIS\)/\1/p;s/^\(filament:.* @XL\)/\1/p' |
+       	while read i; do
+		echo "[genxl] $i"
+		./parseprusa.py "$@" "$i" > "ref/${i/://}.ini"
+	done
