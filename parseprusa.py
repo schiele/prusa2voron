@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
+'Derives new slicer config files from existing ones'
 
 import os
 import re
 import sys
 import subprocess
 
-def evalgen(code, data):
-    exec(code)
 
-def readfile(file, data):
-    if f'file:{file}' in data:
+def evalgen(code, d):
+    'Evaluate generator code'
+    # pylint: disable-next=exec-used
+    exec(code, {'data': d, 'expand': expand})
+
+
+def readfile(file, d):
+    'Read a file'
+    if f'file:{file}' in d:
         return
-    data[f'file:{file}'] = None
+    d[f'file:{file}'] = None
     currentsection = None
     code = ''
-    with open(file, 'r') as f:
+    with open(file, 'r', encoding='utf-8') as f:
         for line in f:
             if line[-1] == '\n':
                 line = line[:-1]
             if currentsection == 'generate':
                 if len(line) > 0 and line[0] == '[' and line[-1] == ']':
-                    evalgen(code, data)
+                    evalgen(code, d)
                     code = ''
                 else:
                     code += line + '\n'
@@ -33,92 +39,113 @@ def readfile(file, data):
                 if line[-1] == ']':
                     currentsection = line[1:-1]
                     if currentsection.split(':')[0] == 'include':
-                        readfile(currentsection.split(':')[1], data)
+                        readfile(currentsection.split(':')[1], d)
                         currentsection = None
                         continue
-                    data[currentsection] = {}
+                    d[currentsection] = {}
                     continue
-                else:
-                    raise ValueError
+                raise ValueError
             key, value = line.split('=', 1)
-            data[currentsection][key.strip()] = value.lstrip()
+            d[currentsection][key.strip()] = value.lstrip()
     if code != '':
-        evalgen(code, data)
+        evalgen(code, d)
 
-def fillsection(name, mysection, data):
+
+def fillsection(name, mysection, d):
+    'Fill sectioni content into the one that inherits it.'
     ctype = name.split(':')[0]
-    if 'inherits' in data[name] and data[name]['inherits'] != '':
-        for inh in data[name]['inherits'].split(';'):
-            fillsection(f'{ctype}:{inh.strip()}', mysection, data)
-    for key, value in data[name].items():
+    if 'inherits' in d[name] and d[name]['inherits'] != '':
+        for inh in d[name]['inherits'].split(';'):
+            fillsection(f'{ctype}:{inh.strip()}', mysection, d)
+    for key, value in d[name].items():
         mysection[key] = value
 
-def expand(name, data):
+
+def expand(name, d):
+    'Expand a section'
     mysection = {}
     ctype, cname = name.split(':')
-    fillsection(f'{ctype}:*DEFAULTS*', mysection, data)
-    fillsection(f'{ctype}:{cname}', mysection, data)
+    fillsection(f'{ctype}:*DEFAULTS*', mysection, d)
+    fillsection(f'{ctype}:{cname}', mysection, d)
     mysection['inherits'] = ''
 
     if ctype == 'printer':
         numextruders = int(mysection['num_nozzles']) \
                 if 'num_nozzles' in mysection else \
                 len(mysection['nozzle_diameter'].split(
-                    data['printer:*MULTEXTRUDERS*']['nozzle_diameter']))
-        for key in data['printer:*MULTEXTRUDERS*'].keys():
-            elems = str(mysection[key]).split(data['printer:*MULTEXTRUDERS*'][key])
+                    d['printer:*MULTEXTRUDERS*']['nozzle_diameter']))
+        for key in d['printer:*MULTEXTRUDERS*'].keys():
+            elems = str(mysection[key]).split(
+                d['printer:*MULTEXTRUDERS*'][key])
             while len(elems) < numextruders:
                 elems.append(elems[0])
             elems = elems[:numextruders]
-            mysection[key] = data['printer:*MULTEXTRUDERS*'][key].join(elems)
+            mysection[key] = d['printer:*MULTEXTRUDERS*'][key].join(elems)
         numspeeds = 2 if mysection['silent_mode'] == '1' else 1
-        for key in data['printer:*MULTSPEEDS*'].keys():
-            elems = str(mysection[key]).split(data['printer:*MULTSPEEDS*'][key])
+        for key in d['printer:*MULTSPEEDS*'].keys():
+            elems = str(mysection[key]).split(d['printer:*MULTSPEEDS*'][key])
             while len(elems) < numspeeds:
                 elems.append(elems[0])
             elems = elems[:numspeeds]
-            mysection[key] = data['printer:*MULTSPEEDS*'][key].join(elems)
-    for key in data['*OBSOLETE*'].keys():
+            mysection[key] = d['printer:*MULTSPEEDS*'][key].join(elems)
+    for key in d['*OBSOLETE*'].keys():
         mysection.pop(key, None)
-    for key in data['*SUFFIX*'].keys():
-        if key in mysection and mysection[key][-1] != data['*SUFFIX*'][key]:
-            mysection[key] += data['*SUFFIX*'][key]
+    for key in d['*SUFFIX*'].keys():
+        if key in mysection and mysection[key][-1] != d['*SUFFIX*'][key]:
+            mysection[key] += d['*SUFFIX*'][key]
     return mysection
 
-data = {}
-readfile('defaults.ini', data)
-for file in sys.argv[1:-1]:
-    readfile(file, data)
 
-if '=' in sys.argv[-1]:
-    directory, pattern = sys.argv[-1].split('=')
+def genset(selection, d):
+    'Generate a set of profiles to files.'
+    directory, pattern = selection.split('=')
     if len(pattern) > 0 and pattern[0] == '[' and pattern[-1] == ']':
-        pattern = data[f'set:{pattern[1:-1]}']['pattern']
+        pattern = d[f'set:{pattern[1:-1]}']['pattern']
     regex = re.compile(pattern)
-    for section in data.keys():
+    for section in d.keys():
         if section[-1] == '*':
             continue
-        if section.split(':')[0] not in [ 'printer', 'filament', 'print', 'resources' ]:
+        if section.split(':')[0] not in [
+                'printer', 'filament', 'print', 'resources']:
             continue
         if not regex.search(section):
             continue
         ctype, cname = section.split(':')
         os.makedirs(f'{directory}/{ctype}', exist_ok=True)
         if ctype == 'resources':
-            result = subprocess.run(['openscad', data[section]['model'], f'-Dtype={data[section]['type']}', '--export-format', 'binstl', '-o', f'{directory}/{ctype}/{cname}.stl'], capture_output=True, text=True)
-            with open(f'{directory}/{ctype}/{cname}.svg', 'w') as f:
+            result = subprocess.run(
+                ['openscad', d[section]['model'],
+                 f'-Dtype={d[section]['type']}',
+                 '--export-format', 'binstl',
+                 '-o', f'{directory}/{ctype}/{cname}.stl'],
+                check=True, capture_output=True, text=True)
+            with open(f'{directory}/{ctype}/{cname}.svg', 'w',
+                      encoding='utf-8') as f:
                 for line in result.stderr.split('\n'):
                     if line.startswith('ECHO: "'):
                         f.write(f'{line[7:-1]}\n')
         else:
-            mysection = expand(section, data)
-            with open(f'{directory}/{ctype}/{cname}.ini', 'w') as f:
-                f.write(f'# generated by prusa2voron\n')
+            mysection = expand(section, d)
+            with open(f'{directory}/{ctype}/{cname}.ini', 'w',
+                      encoding='utf-8') as f:
+                f.write('# generated by prusa2voron\n')
                 for key in sorted(mysection.keys()):
                     f.write(f'{key} = {mysection[key]}\n')
-    exit(0)
-mysection = expand(sys.argv[-1], data)
 
-print(f'# generated by prusa2voron')
-for key in sorted(mysection.keys()):
-    print(f'{key} = {mysection[key]}')
+
+def gensingle(n, d):
+    'Generate a single profile to stdout.'
+    mysection = expand(n, d)
+    print('# generated by prusa2voron')
+    for key in sorted(mysection.keys()):
+        print(f'{key} = {mysection[key]}')
+
+
+data = {}
+readfile('defaults.ini', data)
+readfile(sys.argv[1], data)
+
+if '=' in sys.argv[2]:
+    genset(sys.argv[2], data)
+else:
+    gensingle(sys.argv[2], data)
