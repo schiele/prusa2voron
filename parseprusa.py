@@ -88,8 +88,9 @@ def expand(name, d):
                 elems.append(elems[0])
             elems = elems[:numspeeds]
             mysection[key] = d['printer:*MULTSPEEDS*'][key].join(elems)
-    for key in d['*OBSOLETE*'].keys():
-        mysection.pop(key, None)
+    for key in list(mysection.keys()):
+        if key not in d[f'{ctype}:*DEFAULTS*']:
+            mysection.pop(key, None)
     for key in d['*SUFFIX*'].keys():
         if key in mysection and mysection[key][-1] != d['*SUFFIX*'][key]:
             mysection[key] += d['*SUFFIX*'][key]
