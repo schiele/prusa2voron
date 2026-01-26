@@ -1,15 +1,30 @@
 #!/usr/bin/env python3
 
+import os
+import re
 import sys
+import subprocess
 
-currentsection = None
-data = {}
-mysection = {}
-for file in sys.argv[1:-1]:
+def evalgen(code, data):
+    exec(code)
+
+def readfile(file, data):
+    if f'file:{file}' in data:
+        return
+    data[f'file:{file}'] = None
+    currentsection = None
+    code = ''
     with open(file, 'r') as f:
         for line in f:
             if line[-1] == '\n':
                 line = line[:-1]
+            if currentsection == 'generate':
+                if len(line) > 0 and line[0] == '[' and line[-1] == ']':
+                    evalgen(code, data)
+                    code = ''
+                else:
+                    code += line + '\n'
+                    continue
             if len(line.strip()) == 0:
                 continue
             if line[0] in '#;':
@@ -17,57 +32,93 @@ for file in sys.argv[1:-1]:
             if line[0] == '[':
                 if line[-1] == ']':
                     currentsection = line[1:-1]
+                    if currentsection.split(':')[0] == 'include':
+                        readfile(currentsection.split(':')[1], data)
+                        currentsection = None
+                        continue
                     data[currentsection] = {}
                     continue
                 else:
                     raise ValueError
             key, value = line.split('=', 1)
             data[currentsection][key.strip()] = value.lstrip()
+    if code != '':
+        evalgen(code, data)
 
-def fillsection(section):
-    if 'inherits' in data[section] and data[section]['inherits'] != '':
-        for inh in data[section]['inherits'].split(';'):
-            fillsection(f'{ctype}:{inh.strip()}')
-    for key, value in data[section].items():
+def fillsection(name, mysection, data):
+    ctype = name.split(':')[0]
+    if 'inherits' in data[name] and data[name]['inherits'] != '':
+        for inh in data[name]['inherits'].split(';'):
+            fillsection(f'{ctype}:{inh.strip()}', mysection, data)
+    for key, value in data[name].items():
         mysection[key] = value
 
-if sys.argv[-1] == '--list':
+def expand(name, data):
+    mysection = {}
+    ctype, cname = name.split(':')
+    fillsection(f'{ctype}:*DEFAULTS*', mysection, data)
+    fillsection(f'{ctype}:{cname}', mysection, data)
+    mysection['inherits'] = ''
+
+    if ctype == 'printer':
+        numextruders = int(mysection['num_nozzles']) \
+                if 'num_nozzles' in mysection else \
+                len(mysection['nozzle_diameter'].split(
+                    data['printer:*MULTEXTRUDERS*']['nozzle_diameter']))
+        for key in data['printer:*MULTEXTRUDERS*'].keys():
+            elems = str(mysection[key]).split(data['printer:*MULTEXTRUDERS*'][key])
+            while len(elems) < numextruders:
+                elems.append(elems[0])
+            elems = elems[:numextruders]
+            mysection[key] = data['printer:*MULTEXTRUDERS*'][key].join(elems)
+        numspeeds = 2 if mysection['silent_mode'] == '1' else 1
+        for key in data['printer:*MULTSPEEDS*'].keys():
+            elems = str(mysection[key]).split(data['printer:*MULTSPEEDS*'][key])
+            while len(elems) < numspeeds:
+                elems.append(elems[0])
+            elems = elems[:numspeeds]
+            mysection[key] = data['printer:*MULTSPEEDS*'][key].join(elems)
+    for key in data['*OBSOLETE*'].keys():
+        mysection.pop(key, None)
+    for key in data['*SUFFIX*'].keys():
+        if key in mysection and mysection[key][-1] != data['*SUFFIX*'][key]:
+            mysection[key] += data['*SUFFIX*'][key]
+    return mysection
+
+data = {}
+readfile('defaults.ini', data)
+for file in sys.argv[1:-1]:
+    readfile(file, data)
+
+if '=' in sys.argv[-1]:
+    directory, pattern = sys.argv[-1].split('=')
+    if len(pattern) > 0 and pattern[0] == '[' and pattern[-1] == ']':
+        pattern = data[f'set:{pattern[1:-1]}']['pattern']
+    regex = re.compile(pattern)
     for section in data.keys():
         if section[-1] == '*':
             continue
-        if section.split(':')[0] not in [ 'printer', 'filament', 'print' ]:
+        if section.split(':')[0] not in [ 'printer', 'filament', 'print', 'resources' ]:
             continue
-        print(f'{section}')
+        if not regex.search(section):
+            continue
+        ctype, cname = section.split(':')
+        os.makedirs(f'{directory}/{ctype}', exist_ok=True)
+        if ctype == 'resources':
+            result = subprocess.run(['openscad', data[section]['model'], f'-Dtype={data[section]['type']}', '--export-format', 'binstl', '-o', f'{directory}/{ctype}/{cname}.stl'], capture_output=True, text=True)
+            with open(f'{directory}/{ctype}/{cname}.svg', 'w') as f:
+                for line in result.stderr.split('\n'):
+                    if line.startswith('ECHO: "'):
+                        f.write(f'{line[7:-1]}\n')
+        else:
+            mysection = expand(section, data)
+            with open(f'{directory}/{ctype}/{cname}.ini', 'w') as f:
+                f.write(f'# generated by prusa2voron\n')
+                for key in sorted(mysection.keys()):
+                    f.write(f'{key} = {mysection[key]}\n')
     exit(0)
-ctype, cname = sys.argv[-1].split(':')
+mysection = expand(sys.argv[-1], data)
 
-fillsection(f'{ctype}:*DEFAULTS*')
-fillsection(f'{ctype}:{cname}')
-mysection['inherits'] = ''
-
-if ctype == 'printer':
-    numextruders = int(mysection['num_nozzles']) \
-            if 'num_nozzles' in mysection else \
-            len(mysection['nozzle_diameter'].split(
-                data['printer:*MULTEXTRUDERS*']['nozzle_diameter']))
-    for key in data['printer:*MULTEXTRUDERS*'].keys():
-        elems = str(mysection[key]).split(data['printer:*MULTEXTRUDERS*'][key])
-        while len(elems) < numextruders:
-            elems.append(elems[0])
-        elems = elems[:numextruders]
-        mysection[key] = data['printer:*MULTEXTRUDERS*'][key].join(elems)
-    numspeeds = 2 if mysection['silent_mode'] == '1' else 1
-    for key in data['printer:*MULTSPEEDS*'].keys():
-        elems = str(mysection[key]).split(data['printer:*MULTSPEEDS*'][key])
-        while len(elems) < numspeeds:
-            elems.append(elems[0])
-        elems = elems[:numspeeds]
-        mysection[key] = data['printer:*MULTSPEEDS*'][key].join(elems)
-for key in data['*OBSOLETE*'].keys():
-    mysection.pop(key, None)
-for key in data['*SUFFIX*'].keys():
-    if key in mysection and mysection[key][-1] != data['*SUFFIX*'][key]:
-        mysection[key] += data['*SUFFIX*'][key]
 print(f'# generated by prusa2voron')
 for key in sorted(mysection.keys()):
     print(f'{key} = {mysection[key]}')

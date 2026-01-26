@@ -1,7 +1,0 @@
-#!/bin/bash
-set -eux
-rm -rf out
-mkdir out{,/print,/filament,/printer}
-./parseprusa.py "$@" --list | while read i; do
-	./parseprusa.py "$@" "$i" > "out/${i/://}.ini"
-done

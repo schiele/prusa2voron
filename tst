@@ -8,6 +8,6 @@ for i in ~/.config/PrusaSlicer/{printer,filament,print}/*.ini; do
 	esac
 	NAME="$t:${x%" - "?"."?"."?}"
 	echo "[tst]" "$NAME" "=?" "$i"
-	./parseprusa.py "$@" "$NAME" | tail -n +2 | diff -u <(tail -n +2 "$i") -
+	./parseprusa.py voron.ini "$NAME" | tail -n +2 | diff -u <(tail -n +2 "$i") -
 done
 echo All tests passed.
