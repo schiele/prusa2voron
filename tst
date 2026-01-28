@@ -13,4 +13,9 @@ for i in ~/.config/PrusaSlicer/{printer,filament,print}/*.ini; do
 	echo "[tst]" "$NAME" "=?" "$i"
 	diff -u <(tail -n +2 "$i") <(tail -n +2 "$tstdir/$t/${x%" - "?"."?"."?}".ini)
 done
+for i in ~/.config/PrusaSlicer/resources/*.{stl,svg}; do
+	x=$(basename "$i")
+	echo "[tst]" "resources:$x" "=?" "$i"
+	diff -u "$i" "$tstdir/resources/$x"
+done
 echo All tests passed.

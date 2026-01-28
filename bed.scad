@@ -1,9 +1,7 @@
-// openscad ldo_bed.scad --export-format binstl -o bedopen.stl 3>&1 1>&2 2>&3 | sed -ne 's/ECHO: "\(.*\)"/\1/p' > bedopen.svg
-
 $fa=1;
 $fs=0.5;
-type=350; // [250, 300, 350]
-size=[type, type];
+type=350; // [120, "mk52", 250, 300, 350]
+size=(type=="mk52")?[250, 210]:[type, type];
 eps=1/128;
 
 function logodata(a=1) = [for(p=[for(i=[0:2], j=[-1, 1]) [i-1, (i%2+1)*j],
@@ -18,10 +16,18 @@ module solid(s) mirror([0, 0, 1]) linear_extrude(1)
             [s.x/2, s.y/2],
             [ 0,  s.y/2],
             [ 0, -s.y/2-10],
-            [40, -s.y/2-10],
-            [50, -s.y/2]]);
-        translate([37.5, -s.y/2-9.5]) circle(1);
+            [size.x>150?40:20, -s.y/2-10],
+            [size.x>150?50:30, -s.y/2]]);
+        translate([37.5/(size.x>150?1:2), -s.y/2-9.5]) circle(1);
     };
+
+module mk52() mirror([0, 0, 1]) linear_extrude(1)
+    offset(r=1) offset(r=-2) offset(r=1) difference() {
+        translate([0, -1.5]) offset(r=5) square([244, 231], center=true);
+        for(i=[-1, 1]) translate([145.5/2*i, -234/2]) circle(d=3.5);
+        hull() for(i=[-1, 1]) translate([71*i, 238/2])
+            rotate(30) circle(r=4, $fn=3);
+    }
 
 function join(s, sep = "") = 
     len(s) == 0 ? "" : 
@@ -77,5 +83,5 @@ module svg(s) let(ld=logodata(35)) {
     echo("</svg>");
 }
 
-color("#3f3f3f") solid(size);
+color("#3f3f3f") if(type=="mk52") mk52(); else solid(size);
 svg(size);
