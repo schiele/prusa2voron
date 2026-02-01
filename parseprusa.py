@@ -70,8 +70,8 @@ def expand(name, d):
     mysection['inherits'] = ''
 
     if ctype == 'printer':
-        numextruders = int(mysection['num_nozzles']) \
-                if 'num_nozzles' in mysection else \
+        numextruders = int(mysection['num_extruders']) \
+                if 'num_extruders' in mysection else \
                 len(mysection['nozzle_diameter'].split(
                     d['printer:*MULTEXTRUDERS*']['nozzle_diameter']))
         for key in d['printer:*MULTEXTRUDERS*'].keys():
